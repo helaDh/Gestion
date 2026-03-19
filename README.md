@@ -69,3 +69,32 @@ Toute non-conformité peut entraîner un refus
 Minimiser les données collectées (principe de minimisation)
 Préférer des logs structurés (JSON recommandé)
 Documenter les cas d’usage
+
+
+
+
+Voici la transcription complète du contenu de l’image 👇
+🔐 Surveillance de la Sécurité et Résilience
+Demande d’intégration de logs
+4 - PRS-SSI-SOC-Collecte de logs v1.1
+Les demandes d’intégration de log doivent, dans tous les cas, respecter les principes suivants :
+Toute demande d’intégration doit être justifiée par le demandeur par un scénario d’utilisation (surveillance applicative, alertes prévues, etc.) ;
+Les demandes doivent être effectuées via l’outil de ticketing interne « Darwin ».
+Les informations suivantes doivent figurer dans la demande :
+Le nom de l’application ou du composant système
+Le point de contact de l’équipe ayant la responsabilité de l’application ou du composant système (idéalement une liste de diffusion)
+Les informations permettant la localisation du fichier de log (nom du serveur, chemin sur le serveur, nom de la base de données, serveur syslog, etc.)
+Le format des logs (json, xml, format propriétaire, etc.)
+La présence ou non de données personnelles
+Un exemple de log
+Le demandeur doit également préciser :
+La confidentialité des données contenues dans les logs (interne, confidentielle, etc.)
+La présence ou non de données personnelles et leurs types
+Les accès nécessaires à l’index (ouvert à tous, restreint à une ou plusieurs équipes, etc.)
+Le besoin d’anonymiser certains champs en accord avec le RSSI concerné
+D’autres informations peuvent être nécessaires et seront demandées lors de son traitement
+Les demandes d’intégration de log sont validées et traitées par les administrateurs du SIEM
+CDC Informatique
+Fondamentaux de l’administration cybersécurité
+57
+Si tu veux, je peux te transformer ça en page Confluence propre (avec titres, macros, checklist, etc.) 👍
