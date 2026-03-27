@@ -1,0 +1,218 @@
+---
+# =============================================================================
+# Playbook : Ajout d'une policy Ranger - Row Filtering sur ressource Hive
+# =============================================================================
+# PrÃ©requis :
+#   - Ansible >= 2.9
+#   - AccÃ¨s rÃ©seau aux serveurs Ranger
+#   - Utilisateur user1 avec droits d'administration Ranger
+# =============================================================================
+
+- name: CrÃ©er une policy Ranger Row Filtering sur Hive
+  hosts: localhost
+  gather_facts: false
+
+  vars:
+    # --- Serveurs Ranger (HA) ---
+    ranger_servers:
+      - "https://ranger-server1.example.com:6182"
+      - "https://ranger-server2.example.com:6182"
+
+    # --- Authentification ---
+    ranger_user: "user1"
+    ranger_password: "{{ vault_ranger_password }}"   # Ã  stocker dans Ansible Vault
+
+    # --- Service Hive dans Ranger ---
+    ranger_hive_service: "hive_service"              # nom du service Hive dans Ranger
+
+    # --- DÃ©finition de la policy ---
+    policy_name: "row_filter_database1_table1"
+    policy_description: "Row filtering sur database1.table1 - condition 1=0 pour group1"
+    policy_is_enabled: true
+    policy_is_audit_enabled: true
+
+    # --- Ressource Hive ciblÃ©e ---
+    hive_database: "database1"
+    hive_table: "table1"
+    hive_column: "*"                                 # toutes les colonnes
+
+    # --- Row filter rule ---
+    row_filter_condition: "1=0"                      # filtre : aucune ligne retournÃ©e
+    target_group: "group1"
+    row_filter_access_type: "select"
+
+    # --- Payload de la policy ---
+    ranger_policy_payload:
+      name: "{{ policy_name }}"
+      description: "{{ policy_description }}"
+      service: "{{ ranger_hive_service }}"
+      policyType: 2                                  # 2 = Row Level Filter (0=Access, 1=Masking, 2=Row Filter)
+      isEnabled: "{{ policy_is_enabled }}"
+      isAuditEnabled: "{{ policy_is_audit_enabled }}"
+      resources:
+        database:
+          values:
+            - "{{ hive_database }}"
+          isExcludes: false
+          isRecursive: false
+        table:
+          values:
+            - "{{ hive_table }}"
+          isExcludes: false
+          isRecursive: false
+        column:
+          values:
+            - "{{ hive_column }}"
+          isExcludes: false
+          isRecursive: false
+      rowFilterPolicyItems:
+        - rowFilterInfo:
+            filterExpr: "{{ row_filter_condition }}"
+          accesses:
+            - type: "{{ row_filter_access_type }}"
+              isAllowed: true
+          groups:
+            - "{{ target_group }}"
+          users: []
+          conditions: []
+          delegateAdmin: false
+
+  tasks:
+
+    # -------------------------------------------------------------------------
+    # 1. VÃ©rification de la connectivitÃ© sur les 2 serveurs Ranger
+    # -------------------------------------------------------------------------
+    - name: VÃ©rifier la connectivitÃ© sur chaque serveur Ranger
+      ansible.builtin.uri:
+        url: "{{ item }}/service/public/v2/api/servicedef/name/hive"
+        method: GET
+        user: "{{ ranger_user }}"
+        password: "{{ ranger_password }}"
+        force_basic_auth: true
+        validate_certs: false
+        status_code: 200
+        timeout: 10
+      loop: "{{ ranger_servers }}"
+      register: ranger_connectivity
+      ignore_errors: false
+
+    # -------------------------------------------------------------------------
+    # 2. VÃ©rifier si la policy existe dÃ©jÃ  (sur le premier serveur actif)
+    # -------------------------------------------------------------------------
+    - name: Rechercher la policy existante sur le serveur Ranger primaire
+      ansible.builtin.uri:
+        url: "{{ ranger_servers[0] }}/service/public/v2/api/policy?serviceName={{ ranger_hive_service }}&policyName={{ policy_name }}"
+        method: GET
+        user: "{{ ranger_user }}"
+        password: "{{ ranger_password }}"
+        force_basic_auth: true
+        validate_certs: false
+        return_content: true
+        status_code: 200
+        headers:
+          Accept: "application/json"
+      register: existing_policy_search
+
+    - name: Extraire l'ID de la policy si elle existe
+      ansible.builtin.set_fact:
+        existing_policy_id: >-
+          {{
+            (existing_policy_search.json | selectattr('name', 'equalto', policy_name) | list | first).id
+            | default(omit)
+          }}
+      when:
+        - existing_policy_search.json is defined
+        - existing_policy_search.json | length > 0
+
+    - name: Afficher le statut de la policy existante
+      ansible.builtin.debug:
+        msg: >-
+          {% if existing_policy_id is defined %}
+          Policy '{{ policy_name }}' dÃ©jÃ  existante (ID: {{ existing_policy_id }}) â†’ mise Ã  jour (PUT).
+          {% else %}
+          Policy '{{ policy_name }}' non trouvÃ©e â†’ crÃ©ation (POST).
+          {% endif %}
+
+    # -------------------------------------------------------------------------
+    # 3a. CrÃ©er la policy (POST) si elle n'existe pas
+    # -------------------------------------------------------------------------
+    - name: CrÃ©er la policy Row Filtering (POST)
+      ansible.builtin.uri:
+        url: "{{ item }}/service/public/v2/api/policy"
+        method: POST
+        user: "{{ ranger_user }}"
+        password: "{{ ranger_password }}"
+        force_basic_auth: true
+        validate_certs: false
+        body_format: json
+        body: "{{ ranger_policy_payload }}"
+        status_code: 200
+        headers:
+          Content-Type: "application/json"
+          Accept: "application/json"
+      loop: "{{ ranger_servers }}"
+      register: create_policy_result
+      when: existing_policy_id is not defined
+
+    - name: Confirmer la crÃ©ation de la policy
+      ansible.builtin.debug:
+        msg: "Policy '{{ policy_name }}' crÃ©Ã©e avec succÃ¨s sur {{ item.item }} (ID: {{ item.json.id }})"
+      loop: "{{ create_policy_result.results }}"
+      when:
+        - existing_policy_id is not defined
+        - item.json is defined
+
+    # -------------------------------------------------------------------------
+    # 3b. Mettre Ã  jour la policy (PUT) si elle existe dÃ©jÃ 
+    # -------------------------------------------------------------------------
+    - name: Mettre Ã  jour la policy Row Filtering existante (PUT)
+      ansible.builtin.uri:
+        url: "{{ item }}/service/public/v2/api/policy/{{ existing_policy_id }}"
+        method: PUT
+        user: "{{ ranger_user }}"
+        password: "{{ ranger_password }}"
+        force_basic_auth: true
+        validate_certs: false
+        body_format: json
+        body: "{{ ranger_policy_payload | combine({'id': existing_policy_id}) }}"
+        status_code: 200
+        headers:
+          Content-Type: "application/json"
+          Accept: "application/json"
+      loop: "{{ ranger_servers }}"
+      register: update_policy_result
+      when: existing_policy_id is defined
+
+    - name: Confirmer la mise Ã  jour de la policy
+      ansible.builtin.debug:
+        msg: "Policy '{{ policy_name }}' mise Ã  jour sur {{ item.item }} (ID: {{ existing_policy_id }})"
+      loop: "{{ update_policy_result.results }}"
+      when:
+        - existing_policy_id is defined
+        - item.json is defined
+
+    # -------------------------------------------------------------------------
+    # 4. VÃ©rification post-dÃ©ploiement
+    # -------------------------------------------------------------------------
+    - name: VÃ©rifier la policy sur les 2 serveurs Ranger aprÃ¨s dÃ©ploiement
+      ansible.builtin.uri:
+        url: "{{ item }}/service/public/v2/api/policy?serviceName={{ ranger_hive_service }}&policyName={{ policy_name }}"
+        method: GET
+        user: "{{ ranger_user }}"
+        password: "{{ ranger_password }}"
+        force_basic_auth: true
+        validate_certs: false
+        return_content: true
+        status_code: 200
+        headers:
+          Accept: "application/json"
+      loop: "{{ ranger_servers }}"
+      register: verify_policy
+
+    - name: Afficher le rÃ©sultat de la vÃ©rification
+      ansible.builtin.debug:
+        msg: >-
+          Serveur {{ item.item }} :
+          policy '{{ policy_name }}' prÃ©sente =
+          {{ (item.json | selectattr('name', 'equalto', policy_name) | list | length) > 0 }}
+      loop: "{{ verify_policy.results }}"
